@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TOON KART RUSH</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#10172b;font-family:system-ui,sans-serif;color:white}
+canvas{display:block;width:100vw;height:100vh}
+#help{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);padding:8px 14px;border-radius:999px;background:#08101dcc;border:1px solid #ffffff22;color:#c9d4ee;font-size:12px;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="help">W gas • S mundur • A/D belok • SPACE skill • ENTER rem • R restart</div>
+<script>
+const c=document.getElementById("game"),ctx=c.getContext("2d");
+let W,H,D=1;
+function resize(){D=devicePixelRatio||1;W=innerWidth;H=innerHeight;c.width=W*D;c.height=H*D;ctx.setTransform(D,0,0,D,0,0)}
+addEventListener("resize",resize);resize();
+
+const keys={};
+addEventListener("keydown",e=>{keys[e.key.toLowerCase()]=true;if([" ","enter"].includes(e.key.toLowerCase()))e.preventDefault();if(e.key.toLowerCase()==="r")reset()});
+addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+
+let game="menu",time=0,lap=1,best=localStorage.toonKartBest||0,shake=0;
+let player,ai,particles,boosts,track;
+function reset(){
+ game="play";time=0;lap=1;shake=0;
+ player={x:0,y:0,a:-Math.PI/2,v:0,max:5.7,boost:0,skill:100,brake:false,spin:0};
+ ai={x:0,y:0,a:-Math.PI/2,v:4.25,phase:0};
+ particles=[];boosts=[];
+ for(let i=0;i<7;i++)boosts.push({t:i*.75+1.2});
+}
+const checkpoints=[
+ {x:0,y:330},{x:310,y:280},{x:470,y:20},{x:360,y:-270},{x:0,y:-330},{x:-360,y:-270},{x:-470,y:20},{x:-310,y:280}
+];
+function center(t){
+ t=((t%8)+8)%8;let i=Math.floor(t),q=t-i,a=checkpoints[i],b=checkpoints[(i+1)%8];
+ return {x:a.x+(b.x-a.x)*q,y:a.y+(b.y-a.y)*q};
+}
+function nearestParam(x,y){
+ let bestT=0,bestD=1e9;
+ for(let i=0;i<8;i++)for(let j=0;j<=12;j++){
+   let t=i+j/12,p=center(t),d=(x-p.x)**2+(y-p.y)**2;
+   if(d<bestD){bestD=d;bestT=t}
+ }
+ return {t:bestT,d:Math.sqrt(bestD)};
+}
+function roadWidth(t){return 125+18*Math.sin(t*1.7)}
+function update(dt){
+ if(game!=="play")return;
+ time+=dt/60;
+ const turn=(keys.a?-1:0)+(keys.d?1:0);
+ let accel=keys.w?0.20:keys.s?-0.12:-0.035;
+ if(keys.enter){player.v*=.90;player.brake=true}else player.brake=false;
+ if(player.boost>0){player.boost-=dt;accel+=.38}
+ if(keys[" "]&&player.skill>=100){player.boost=70;player.skill=0;shake=5;burst(player.x,player.y,28,"#ffe05c")}
+ player.skill=Math.min(100,player.skill+dt*.08);
+ player.v=Math.max(-2,Math.min(player.max+(player.boost>0?3:0),player.v+accel*dt/10));
+ player.a+=turn*0.045*(Math.abs(player.v)/5+0.25)*dt;
+ player.x+=Math.cos(player.a)*player.v*dt/10;
+ player.y+=Math.sin(player.a)*player.v*dt/10;
+ const n=nearestParam(player.x,player.y),w=roadWidth(n.t);
+ if(n.d>w/2){player.v*=.93;player.x+=(center(n.t).x-player.x)*.012;player.y+=(center(n.t).y-player.y)*.012}
+ // lap based on progress
+ const prog=n.t/8;
+ lap=Math.min(3,Math.floor(prog)+1);
+ if(prog>=3){game="win";best=best?Math.min(best,time):time;localStorage.toonKartBest=best}
+ // AI
+ ai.phase+=dt*.001;let target=center((time*.075)%8),dx=target.x-ai.x,dy=target.y-ai.y;
+ ai.a=Math.atan2(dy,dx);ai.v=4.25+Math.sin(time*2.2)*.3;ai.x+=Math.cos(ai.a)*ai.v*dt/10;ai.y+=Math.sin(ai.a)*ai.v*dt/10;
+ // particles
+ if(Math.abs(player.v)>3){burst(player.x-Math.cos(player.a)*24,player.y-Math.sin(player.a)*24,1,player.boost>0?"#ffe05c":"#b8c8e8")}
+ for(let i=particles.length-1;i>=0;i--){let p=particles[i];p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt*.025;if(p.life<=0)particles.splice(i,1)}
+ shake*=.88;
+}
+function burst(x,y,n,col){
+ for(let i=0;i<n;i++)particles.push({x,y,vx:(Math.random()-.5)*3,vy:(Math.random()-.5)*3,life:1,col});
+}
+function worldToScreen(x,y,camX,camY,scale){return {x:W/2+(x-camX)*scale,y:H/2+(y-camY)*scale}}
+function drawKart(k,camX,camY,scale,color,enemy=false){
+ let p=worldToScreen(k.x,k.y,camX,camY,scale);
+ ctx.save();ctx.translate(p.x,p.y);ctx.rotate(k.a);
+ ctx.shadowBlur=18;ctx.shadowColor=color;
+ ctx.fillStyle="#101522";round(-22,-14,44,28,9);
+ ctx.shadowBlur=0;ctx.fillStyle=color;round(-16,-17,32,27,8);
+ ctx.fillStyle="#f5d2a5";ctx.beginPath();ctx.arc(5,-2,9,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle=enemy?"#8d5cff":"#ffda43";round(-11,-15,22,7,4);
+ ctx.fillStyle="#151b31";ctx.fillRect(7,-6,3,3);ctx.fillRect(7,2,3,3);
+ ctx.fillStyle="#222";ctx.fillRect(-19,-15,8,7);ctx.fillRect(11,-15,8,7);ctx.fillRect(-19,8,8,7);ctx.fillRect(11,8,8,7);
+ if(k.boost>0&&!enemy){ctx.fillStyle="#ffe05c";ctx.beginPath();ctx.moveTo(-24,0);ctx.lineTo(-45,-8);ctx.lineTo(-37,0);ctx.lineTo(-45,8);ctx.closePath();ctx.fill()}
+ ctx.restore();
+}
+function round(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill()}
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ let sky=ctx.createLinearGradient(0,0,0,H);sky.addColorStop(0,"#17285b");sky.addColorStop(.55,"#5fc8df");sky.addColorStop(1,"#84d36c");ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ // clouds
+ for(let i=0;i<7;i++){let cx=((i*260-time*15)%(W+300))-150,cy=90+(i%3)*70;ctx.fillStyle="#ffffff55";ctx.beginPath();ctx.arc(cx,cy,25,0,7);ctx.arc(cx+25,cy-10,34,0,7);ctx.arc(cx+60,cy,22,0,7);ctx.fill()}
+ const scale=Math.min(W,H)/920,camX=player.x,camY=player.y;
+ // grass
+ ctx.fillStyle="#62bd59";ctx.fillRect(0,0,W,H);
+ // track ribbons as many sampled segments
+ function ribbon(width,color,offset=0){
+   ctx.beginPath();
+   for(let s=0;s<=160;s++){let t=s/20+offset,p=center(t),q=worldToScreen(p.x,p.y,camX,camY,scale);if(s===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y)}
+   ctx.lineWidth=width*scale;ctx.lineCap="round";ctx.lineJoin="round";ctx.strokeStyle=color;ctx.stroke();
+ }
+ ribbon(155,"#e8e0c7");ribbon(130,"#454a55");ribbon(5,"#ffffff99");
+ // red-white curbs
+ for(let s=0;s<160;s+=2){let t=s/20,p=center(t),p2=center(t+.025),dx=p2.x-p.x,dy=p2.y-p.y,len=Math.hypot(dx,dy),nx=-dy/len,ny=dx/len,q=worldToScreen(p.x+nx*69,p.y+ny*69,camX,camY,scale);ctx.fillStyle=s%4?"#ef4b4b":"#fff";ctx.save();ctx.translate(q.x,q.y);ctx.rotate(Math.atan2(dy,dx));ctx.fillRect(-8*scale,-4*scale,16*scale,8*scale);ctx.restore()}
+ // start line
+ let st=center(0),sp=worldToScreen(st.x,st.y,camX,camY,scale);ctx.fillStyle="#fff";ctx.fillRect(sp.x-62*scale,sp.y-4*scale,124*scale,8*scale);
+ // trees
+ for(let i=0;i<22;i++){let t=i*.75+1,p=center(t),side=i%2?1:-1,q=worldToScreen(p.x+side*150,p.y,camX,camY,scale);ctx.fillStyle="#315e3d";ctx.beginPath();ctx.arc(q.x,q.y,22*scale,0,7);ctx.fill();ctx.fillStyle="#8b5a37";ctx.fillRect(q.x-5*scale,q.y+15*scale,10*scale,25*scale)}
+ // particles
+ for(const p of particles){let q=worldToScreen(p.x,p.y,camX,camY,scale);ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.col;ctx.fillRect(q.x,q.y,4,4)}ctx.globalAlpha=1;
+ drawKart(ai,camX,camY,scale,"#9a67ff",true);drawKart(player,camX,camY,scale,"#ff5a4f");
+ // HUD
+ ctx.fillStyle="#10172dcc";round(18,18,220,82,16);ctx.fillStyle="#fff";ctx.font="900 20px system-ui";ctx.fillText("TOON KART RUSH",32,45);
+ ctx.font="700 13px system-ui";ctx.fillStyle="#aebbd8";ctx.fillText("LAP "+Math.min(lap,3)+" / 3",32,66);
+ ctx.fillStyle="#ffd85a";ctx.fillText("TIME "+time.toFixed(1)+"s",125,66);
+ // skill
+ ctx.fillStyle="#10172dcc";round(W-238,18,220,62,16);ctx.fillStyle="#aebbd8";ctx.font="700 11px system-ui";ctx.fillText("SKILL",W-220,39);
+ ctx.fillStyle="#202a46";round(W-220,47,184,12,6);ctx.fillStyle="#ffe05c";round(W-220,47,184*player.skill/100,12,6);
+ if(player.skill>=100){ctx.fillStyle="#fff";ctx.font="800 11px system-ui";ctx.fillText("SPACE READY!",W-126,39)}
+ if(game==="menu"||game==="win"){
+   ctx.fillStyle="#07101dcc";ctx.fillRect(0,0,W,H);ctx.textAlign="center";
+   ctx.fillStyle="#fff";ctx.font="1000 54px system-ui";ctx.fillText(game==="menu"?"TOON KART RUSH":"YOU WIN!",W/2,H*.38);
+   ctx.fillStyle="#ffe05c";ctx.font="800 18px system-ui";ctx.fillText("Original cartoon kart racing",W/2,H*.38+35);
+   ctx.fillStyle="#c7d2eb";ctx.font="14px system-ui";ctx.fillText("W gas • S mundur • A/D belok • SPACE skill boost • ENTER rem",W/2,H*.38+72);
+   ctx.fillStyle="#fff";ctx.font="800 16px system-ui";ctx.fillText(game==="menu"?"ENTER / TAP untuk mulai":"R untuk balapan lagi",W/2,H*.38+112);
+   if(best)ctx.fillText("Best time: "+Number(best).toFixed(1)+"s",W/2,H*.38+142);
+   ctx.textAlign="left";
+ }
+}
+function loop(t){let dt=Math.min(2,t-(loop.last||t));loop.last=t;update(dt);draw();requestAnimationFrame(loop)}
+reset();game="menu";requestAnimationFrame(loop);
+</script>
+</body>
+</html>
